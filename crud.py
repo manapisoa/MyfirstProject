@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
-from . import models, schemas
-from .auth import get_password_hash
+import models, schemas
+from auth import get_password_hash
 
 # User
 def get_user_by_email(db: Session, email: str):
