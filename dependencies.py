@@ -1,11 +1,7 @@
-from typing import Generator
-from sqlalchemy.orm import Session
-import database
+from typing import Optional, Dict, Any, List
 
-def get_db() -> Generator[Session, None, None]:
-    """Dependency that provides a database session."""
-    db = database.SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Les dépendances principales sont maintenant directement dans database.py
+# Ce fichier est conservé pour la compatibilité avec le code existant
+
+# Importez directement depuis database.py
+from database import get_db

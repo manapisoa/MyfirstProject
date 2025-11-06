@@ -1,14 +1,33 @@
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional, Union, Dict, Any
 import json
+from datetime import datetime, timedelta
 
-import crud, models, schemas, database, auth
+import crud
+import models
+import schemas
+import database
+import auth
 from websocket_manager import manager
 from dependencies import get_db
+from chat import router as chat_router
 
 app = FastAPI()
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # En production, remplacez par vos origines autorisées
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Include chat router
+app.include_router(chat_router)
 
 # Créer les tables
 @app.on_event("startup")
