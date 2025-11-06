@@ -1,10 +1,14 @@
+import os
 from typing import Any, Dict, List, Optional
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
 # Configuration de la base de données
-SQLALCHEMY_DATABASE_URL = "postgresql://fastapi_user:manampy@localhost/myfirstproject"  # Changez selon votre DB
+SQLALCHEMY_DATABASE_URL = os.getenv(
+    "DATABASE_URL", 
+    "postgresql://postgres:postgres@localhost/fastapi_db"
+)  # Utilise la variable d'environnement ou la valeur par défaut
 
 # Création du moteur de base de données
 engine = create_engine(

@@ -1,0 +1,43 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git
+.gitignore
+
+# Docker
+docker-compose.override.yml
+
+# Logs
+*.log
+
+# Local development
+*.sqlite3
+*.db
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+alembic/versions/*
+!alembic/versions/.gitkeep
