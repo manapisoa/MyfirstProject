@@ -24,12 +24,35 @@ def create_user(db: Session, user: schemas.UserCreate):
         raise ValueError("Username already taken")
     
     hashed = get_password_hash(user.password)
-    db_user = models.User(
-        email=user.email,
-        username=user.username,
-        hashed_password=hashed
-    )
+    user_data = user.dict()
+    user_data.pop('password')
+    user_data['hashed_password'] = hashed
+    
+    db_user = models.User(**user_data)
     db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    return db_user
+
+def update_user(db: Session, user_id: int, user_data: dict):
+    db_user = get_user(db, user_id)
+    if not db_user:
+        raise ValueError("User not found")
+    
+    # Check if new username is taken
+    if 'username' in user_data and user_data['username'] != db_user.username:
+        if get_user_by_username(db, user_data['username']):
+            raise ValueError("Username already taken")
+    
+    # Check if new email is taken
+    if 'email' in user_data and user_data['email'] != db_user.email:
+        if get_user_by_email(db, user_data['email']):
+            raise ValueError("Email already registered")
+    
+    # Update user fields
+    for field, value in user_data.items():
+        setattr(db_user, field, value)
+    
     db.commit()
     db.refresh(db_user)
     return db_user

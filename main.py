@@ -1,10 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect, status, UploadFile, File, Form
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from typing import List, Optional, Union, Dict, Any
 import json
+import os
+import shutil
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import crud
 import models
@@ -15,7 +19,14 @@ from websocket_manager import manager
 from dependencies import get_db
 from chat import router as chat_router
 
+# Configuration
+UPLOAD_FOLDER = "static/uploads/profiles"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 app = FastAPI()
+
+# Mount static files
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # CORS middleware
 app.add_middleware(
@@ -42,6 +53,62 @@ def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     return crud.create_user(db, user)
+
+@app.get("/profile/me", response_model=schemas.UserResponse)
+async def read_user_profile(current_user: models.User = Depends(auth.get_current_user)):
+    """Get current user's profile"""
+    return current_user
+
+@app.put("/profile/me", response_model=schemas.UserResponse)
+async def update_user_profile(
+    username: Optional[str] = Form(None),
+    bio: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    profile_photo: Optional[UploadFile] = File(None),
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user's profile"""
+    # Handle file upload if present
+    profile_photo_url = None
+    if profile_photo and profile_photo.filename:
+        # Create uploads directory if it doesn't exist
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        
+        # Generate a unique filename
+        file_ext = os.path.splitext(profile_photo.filename)[1]
+        filename = f"user_{current_user.id}_{int(datetime.utcnow().timestamp())}{file_ext}"
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        
+        # Save the file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(profile_photo.file, buffer)
+        
+        # Delete old profile photo if exists
+        if current_user.profile_photo:
+            try:
+                old_photo_path = os.path.join("static", current_user.profile_photo.lstrip("/"))
+                if os.path.exists(old_photo_path):
+                    os.remove(old_photo_path)
+            except Exception as e:
+                print(f"Error deleting old profile photo: {e}")
+        
+        profile_photo_url = f"/static/uploads/profiles/{filename}"
+    
+    # Update user data
+    update_data = {}
+    if username is not None:
+        update_data["username"] = username
+    if bio is not None:
+        update_data["bio"] = bio
+    if gender is not None:
+        update_data["gender"] = gender
+    if profile_photo_url is not None:
+        update_data["profile_photo"] = profile_photo_url
+    
+    # Update user in database
+    db_user = crud.update_user(db, current_user.id, update_data)
+    return db_user
 
 @app.post("/login", response_model=schemas.Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):

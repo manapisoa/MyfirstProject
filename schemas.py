@@ -13,15 +13,27 @@ class MessageType(str, Enum):
 class UserBase(BaseModel):
     email: EmailStr
     username: str
+    profile_photo: Optional[str] = None
+    bio: Optional[str] = None
+    gender: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
 
 class UserResponse(UserBase):
     id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
     
     class Config:
         from_attributes = True
+
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    email: Optional[EmailStr] = None
+    profile_photo: Optional[str] = None
+    bio: Optional[str] = None
+    gender: Optional[str] = None
 
 # Project schemas
 class ProjectBase(BaseModel):

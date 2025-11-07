@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker, Session
 # Configuration de la base de données
 SQLALCHEMY_DATABASE_URL = os.getenv(
     "DATABASE_URL", 
-    "postgresql://postgres:postgres@localhost/fastapi_db"
+    "postgresql://postgres:postgres@localhost/myfirstproject"
 )  # Utilise la variable d'environnement ou la valeur par défaut
 
 # Création du moteur de base de données
