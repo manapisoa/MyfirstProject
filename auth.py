@@ -13,7 +13,7 @@ import crud
 from dependencies import get_db
 
 # Configuration
-SECRET_KEY = "your-secret-key-here"  # À remplacer par une clé secrète sécurisée
+SECRET_KEY = "manampy"  # À remplacer par une clé secrète sécurisée
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30 jours
 
