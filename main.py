@@ -31,7 +31,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # En production, remplacez par vos origines autorisées
+    allow_origins=["http://localhost:3000"],  # Autorise uniquement le frontend en développement
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
