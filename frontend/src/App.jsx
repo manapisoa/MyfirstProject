@@ -1,14 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from './context/AuthContext';
 import CodeEditor from './components/CodeEditor/CodeEditor';
 import Chat from './components/Chat/Chat';
 import RoomSelector from './components/RoomSelector/RoomSelector';
-import { FaCode, FaUsers, FaSignOutAlt } from 'react-icons/fa';
+import { FaCode, FaUsers, FaSignOutAlt, FaUserCircle, FaSpinner } from 'react-icons/fa';
 import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
-function App() {
+const App = () => {
+  const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [socket, setSocket] = useState(null);
   const [currentUser, setCurrentUser] = useState('');
   const [room, setRoom] = useState('');
@@ -18,13 +23,49 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
+  // Redirection si non authentifié
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      navigate('/login', { state: { from: location }, replace: true });
+    }
+  }, [isAuthenticated, authLoading, navigate, location]);
+
+  // Initialisation de l'utilisateur courant
+  useEffect(() => {
+    if (user?.username) {
+      setCurrentUser(user.username);
+    }
+  }, [user]);
+
   // Initialisation de la connexion WebSocket
   useEffect(() => {
-    const newSocket = io(API_URL);
+    if (!isAuthenticated) return;
+
+    const newSocket = io(API_URL, {
+      auth: {
+        token: user?.token
+      }
+    });
+
+    newSocket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+
+    newSocket.on('connect_error', (err) => {
+      console.error('Connection error:', err);
+      if (err.message === 'Authentication error') {
+        logout();
+      }
+    });
+
     setSocket(newSocket);
 
-    return () => newSocket.close();
-  }, []);
+    return () => {
+      if (newSocket) {
+        newSocket.disconnect();
+      }
+    };
+  }, [isAuthenticated, user?.token, logout]);
 
   // Gestion des événements WebSocket
   useEffect(() => {
@@ -75,33 +116,61 @@ function App() {
     };
   }, [socket]);
 
-  const joinRoom = (roomName, username) => {
-    if (!socket) return;
+  const joinRoom = async (roomName, username) => {
+    if (!socket || !isAuthenticated) return;
 
     setLoading(true);
     setError('');
 
-    socket.emit('join_room', { room: roomName, username }, (response) => {
-      if (response.error) {
-        setError(response.error);
-        setLoading(false);
-      } else {
-        setRoom(roomName);
-        setCurrentUser(username);
-        setLoading(false);
+    try {
+      // Utiliser le token d'authentification pour rejoindre la salle
+      socket.emit('join_room', { 
+        room: roomName, 
+        username: user.username || username,
+        token: user.token
+      }, (response) => {
+        if (response?.error) {
+          setError(response.error);
+          if (response.code === 'AUTH_ERROR') {
+            logout();
+          }
+        } else {
+          setRoom(roomName);
+          setCurrentUser(user.username || username);
+          // Sauvegarder la salle dans le localStorage pour la récupérer après un rafraîchissement
+          localStorage.setItem('currentRoom', roomName);
+        }
+      });
+    } catch (err) {
+      console.error('Error joining room:', err);
+      setError('Une erreur est survenue lors de la connexion à la salle');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      if (socket) {
+        socket.emit('leave_room');
+        socket.disconnect();
       }
-    });
+      await logout();
+      navigate('/login', { replace: true });
+    } catch (err) {
+      console.error('Logout error:', err);
+    }
   };
 
   const leaveRoom = () => {
     if (socket) {
       socket.emit('leave_room');
-      setRoom('');
-      setCurrentUser('');
-      setMessages([]);
-      setUsers([]);
-      setCode('// Commencez à coder...\n// Votre code sera synchronisé en temps réel');
+      localStorage.removeItem('currentRoom');
     }
+    setRoom('');
+    setMessages([]);
+    setUsers([]);
+    setCode('// Commencez à coder...\n// Votre code sera synchronisé en temps réel');
   };
 
   const handleCodeChange = (newCode) => {
@@ -126,6 +195,31 @@ function App() {
     });
   };
 
+  // Récupérer la salle précédente après un rafraîchissement
+  useEffect(() => {
+    if (isAuthenticated && socket && !room) {
+      const savedRoom = localStorage.getItem('currentRoom');
+      if (savedRoom) {
+        joinRoom(savedRoom, user?.username);
+      }
+    }
+  }, [isAuthenticated, socket, user?.username]);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <FaSpinner className="animate-spin h-12 w-12 text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600">Chargement de l'application...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null; // La redirection est gérée par le useEffect
+  }
+
   if (!room) {
     return <RoomSelector onJoinRoom={joinRoom} loading={loading} error={error} />;
   }
@@ -148,16 +242,30 @@ function App() {
               <FaUsers className="mr-1" />
               <span>{users.length} connecté(s)</span>
             </div>
-            <div className="text-sm font-medium text-gray-700">
-              {currentUser}
+            <div className="flex items-center space-x-2">
+              <FaUserCircle className="h-6 w-6 text-gray-500" />
+              <span className="text-sm font-medium text-gray-700" title={user?.email}>
+                {currentUser || user?.username || 'Utilisateur'}
+              </span>
             </div>
-            <button
-              onClick={leaveRoom}
-              className="flex items-center text-sm text-red-600 hover:text-red-800"
-            >
-              <FaSignOutAlt className="mr-1" />
-              Quitter
-            </button>
+            <div className="flex space-x-2">
+              <button
+                onClick={leaveRoom}
+                className="flex items-center text-sm text-gray-600 hover:text-gray-800 px-2 py-1 rounded hover:bg-gray-100"
+                title="Quitter la salle"
+              >
+                <FaSignOutAlt className="mr-1" />
+                <span className="hidden sm:inline">Quitter</span>
+              </button>
+              <button
+                onClick={handleLogout}
+                className="flex items-center text-sm text-red-600 hover:text-red-800 px-2 py-1 rounded hover:bg-red-50"
+                title="Déconnexion"
+              >
+                <FaSignOutAlt className="mr-1" />
+                <span className="hidden sm:inline">Déconnexion</span>
+              </button>
+            </div>
           </div>
         </div>
       </header>
