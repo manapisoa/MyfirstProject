@@ -107,16 +107,26 @@ export function decodeToken(token) {
 /**
  * Vérifie si un token est expiré
  * @param {string} token - Le token JWT
- * @returns {boolean} True si le token est expiré, false sinon
+ * @returns {boolean} True si le token est expiré, invalide ou manquant, false sinon
  */
 export function isTokenExpired(token) {
+  // Vérifie si le token est manquant ou vide
+  if (!token || typeof token !== 'string' || token.trim() === '') {
+    return true;
+  }
+
   try {
     const decoded = decodeToken(token);
-    if (!decoded || !decoded.exp) return true;
     
-    const currentTime = Date.now() / 1000;
+    // Vérifie si le décodage a échoué ou si le token n'a pas de champ 'exp'
+    if (!decoded || typeof decoded !== 'object' || !('exp' in decoded)) {
+      return true;
+    }
+    
+    const currentTime = Math.floor(Date.now() / 1000); // Temps actuel en secondes
     return decoded.exp < currentTime;
   } catch (err) {
-    return true;
+    console.error('Erreur lors de la vérification du token:', err);
+    return true; // En cas d'erreur, on considère le token comme expiré/invalide
   }
 }
