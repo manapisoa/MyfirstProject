@@ -7,31 +7,73 @@ const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
  * @returns {Promise<Object>} Les informations de l'utilisateur et le token
  */
 export async function login(email, password) {
-  const formData = new URLSearchParams();
-  formData.append('username', email);
-  formData.append('password', password);
-  
-  const response = await fetch(`${API_URL}/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: formData,
-  });
+  try {
+    console.log('Tentative de connexion avec email:', email);
+    
+    // Vérifier que l'email et le mot de passe sont fournis
+    if (!email || !password) {
+      throw new Error('Veuillez fournir un email et un mot de passe');
+    }
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || 'Échec de la connexion');
+    // Créer les données de formulaire pour l'authentification OAuth2
+    const formData = new URLSearchParams();
+    formData.append('username', email);
+    formData.append('password', password);
+    
+    console.log('Envoi de la requête de connexion à:', `${API_URL}/login`);
+    
+    const response = await fetch(`${API_URL}/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formData,
+    });
+
+    console.log('Réponse de connexion - Statut:', response.status);
+    
+    // Essayer de récupérer les données de la réponse
+    let responseData;
+    try {
+      responseData = await response.json();
+      console.log('Données de réponse:', responseData);
+    } catch (e) {
+      console.error('Erreur lors de l\'analyse de la réponse JSON:', e);
+      throw new Error('Erreur lors de la connexion au serveur');
+    }
+
+    if (!response.ok) {
+      // Gestion des erreurs spécifiques
+      if (response.status === 401) {
+        throw new Error('Email ou mot de passe incorrect');
+      } else if (response.status === 400) {
+        throw new Error('Requête invalide. Vérifiez vos informations.');
+      } else {
+        throw new Error(responseData.detail || 'Échec de la connexion');
+      }
+    }
+
+    // Vérifier que le token est présent dans la réponse
+    if (!responseData.access_token) {
+      console.error('Token d\'accès manquant dans la réponse:', responseData);
+      throw new Error('Erreur lors de l\'authentification: token manquant');
+    }
+
+    // Récupérer les informations de l'utilisateur
+    const userData = await getProfile(responseData.access_token);
+    
+    return {
+      accessToken: responseData.access_token,
+      user: {
+        email: email,
+        username: userData.username || email.split('@')[0],
+        ...userData
+      }
+    };
+  } catch (error) {
+    console.error('Erreur lors de la connexion:', error);
+    throw error;
   }
-
-  const data = await response.json();
-  return {
-    accessToken: data.access_token,
-    user: {
-      email: email,
-      username: email.split('@')[0], // Le backend devrait retourner le vrai nom d'utilisateur
-    },
-  };
 }
 
 /**
@@ -42,25 +84,65 @@ export async function login(email, password) {
  * @param {string} userData.password - Le mot de passe
  * @returns {Promise<Object>} Les informations de l'utilisateur créé
  */
-export async function register({ email, username, password }) {
-  const response = await fetch(`${API_URL}/register`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+export async function register({ email, username, password, profile_photo = null, bio = null, gender = null }) {
+  try {
+    // Préparer le corps de la requête
+    const requestBody = {
       email,
       username,
       password,
-    }),
-  });
+      ...(profile_photo && { profile_photo }),
+      ...(bio && { bio }),
+      ...(gender && { gender })
+    };
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.detail || "Échec de l'inscription");
+    console.log('Envoi de la requête d\'inscription :', requestBody);
+
+    // D'abord, envoyer une requête OPTIONS pour vérifier CORS
+    const optionsResponse = await fetch(`${API_URL}/register`, {
+      method: 'OPTIONS',
+      mode: 'cors',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    console.log('Réponse OPTIONS:', optionsResponse.status, optionsResponse.statusText);
+
+    // Ensuite, envoyer la requête POST
+    const response = await fetch(`${API_URL}/register`, {
+      method: 'POST',
+      mode: 'cors',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    console.log('Registration response status:', response.status);
+    
+    let responseData;
+    try {
+      responseData = await response.json();
+      console.log('Registration response data:', responseData);
+    } catch (e) {
+      console.error('Failed to parse JSON response:', e);
+      responseData = {};
+    }
+
+    if (!response.ok) {
+      throw new Error(responseData.detail || responseData.message || "Échec de l'inscription");
+    }
+
+    return responseData;
+  } catch (error) {
+    console.error('Registration error:', error);
+    throw error;
   }
-
-  return await response.json();
 }
 
 /**
@@ -69,17 +151,46 @@ export async function register({ email, username, password }) {
  * @returns {Promise<Object>} Les informations du profil utilisateur
  */
 export async function getProfile(token) {
-  const response = await fetch(`${API_URL}/profile/me`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
+  try {
+    if (!token) {
+      console.error('Aucun token fourni pour la récupération du profil');
+      throw new Error('Token d\'authentification manquant');
+    }
 
-  if (!response.ok) {
-    throw new Error('Erreur lors de la récupération du profil');
+    console.log('Récupération du profil utilisateur...');
+    
+    const response = await fetch(`${API_URL}/profile/me`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+      },
+      credentials: 'include',
+    });
+
+    console.log('Réponse de récupération du profil - Statut:', response.status);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('Erreur lors de la récupération du profil:', errorData);
+      
+      if (response.status === 401) {
+        throw new Error('Session expirée. Veuillez vous reconnecter.');
+      } else if (response.status === 404) {
+        throw new Error('Profil utilisateur introuvable');
+      } else {
+        throw new Error(errorData.detail || 'Erreur lors de la récupération du profil');
+      }
+    }
+
+    const userData = await response.json();
+    console.log('Profil utilisateur récupéré avec succès:', userData);
+    
+    return userData;
+  } catch (error) {
+    console.error('Erreur dans getProfile:', error);
+    throw error; // Propager l'erreur pour une gestion ultérieure
   }
-
-  return await response.json();
 }
 
 /**

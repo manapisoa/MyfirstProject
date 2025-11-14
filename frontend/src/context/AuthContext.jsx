@@ -94,7 +94,7 @@ export const AuthProvider = ({ children }) => {
       
       // Connecter automatiquement l'utilisateur après l'inscription
       if (newUser) {
-        return await login(userData.email, userData.password);
+        return await lostringgin(userData.email, userData.password);
       }
       
       return newUser;
