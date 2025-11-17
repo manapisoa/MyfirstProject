@@ -17,22 +17,24 @@ def get_user(db: Session, user_id: int):
     return db.query(models.User).filter(models.User.id == user_id).first()
 
 def create_user(db: Session, user: schemas.UserCreate):
-    # Vérifier si l'email ou le nom d'utilisateur existe déjà
-    if get_user_by_email(db, user.email):
-        raise ValueError("Email already registered")
-    if get_user_by_username(db, user.username):
-        raise ValueError("Username already taken")
-    
-    hashed = get_password_hash(user.password)
-    user_data = user.dict()
-    user_data.pop('password')
-    user_data['hashed_password'] = hashed
-    
-    db_user = models.User(**user_data)
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+    try:
+        # Créer un dictionnaire avec les données de l'utilisateur
+        user_data = user.dict(exclude={'password'})
+        
+        # Hasher le mot de passe
+        user_data['hashed_password'] = get_password_hash(user.password)
+        
+        # Créer l'utilisateur
+        db_user = models.User(**user_data)
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+        
+    except Exception as e:
+        db.rollback()
+        print(f"Erreur lors de la création de l'utilisateur: {str(e)}")
+        raise
 
 def update_user(db: Session, user_id: int, user_data: dict):
     db_user = get_user(db, user_id)

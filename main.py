@@ -53,11 +53,33 @@ def on_startup():
 # === AUTH ===
 
 @app.post("/register", response_model=schemas.UserResponse)
-def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
-    db_user = crud.get_user_by_email(db, user.email)
-    if db_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    return crud.create_user(db, user)
+async def register(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    try:
+        # Vérifier si l'email existe déjà
+        db_user = crud.get_user_by_email(db, email=user.email)
+        if db_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email déjà enregistré"
+            )
+        
+        # Vérifier si le nom d'utilisateur existe déjà
+        db_username = crud.get_user_by_username(db, username=user.username)
+        if db_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Nom d'utilisateur déjà utilisé"
+            )
+        
+        # Créer l'utilisateur
+        return crud.create_user(db=db, user=user)
+        
+    except Exception as e:
+        print(f"Erreur lors de l'inscription: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de l'inscription: {str(e)}"
+        )
 
 @app.get("/profile/me", response_model=schemas.UserResponse)
 async def read_user_profile(current_user: models.User = Depends(auth.get_current_user)):

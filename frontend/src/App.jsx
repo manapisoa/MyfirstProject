@@ -1,11 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import CodeEditor from './components/CodeEditor/CodeEditor';
 import Chat from './components/Chat/Chat';
 import RoomSelector from './components/RoomSelector/RoomSelector';
 import { FaCode, FaUsers, FaSignOutAlt, FaUserCircle, FaSpinner } from 'react-icons/fa';
+import websocketService from './services/websocketService';
 import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -14,7 +14,6 @@ const App = () => {
   const { user, isAuthenticated, loading: authLoading, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [socket, setSocket] = useState(null);
   const [currentUser, setCurrentUser] = useState('');
   const [room, setRoom] = useState('');
   const [code, setCode] = useState('// Commencez à coder...\n// Votre code sera synchronisé en temps réel');
@@ -37,124 +36,106 @@ const App = () => {
     }
   }, [user]);
 
-  // Initialisation de la connexion WebSocket
+  // Handle WebSocket messages
+  const handleWebSocketMessage = useCallback((message) => {
+    if (message.type === 'code_update') {
+      setCode(message.content);
+    } else if (message.type === 'chat_message') {
+      setMessages(prev => [...prev, message]);
+    } else if (message.type === 'user_joined') {
+      setUsers(prev => [...new Set([...prev, message.username])]);
+    } else if (message.type === 'user_left') {
+      setUsers(prev => prev.filter(user => user !== message.username));
+    } else if (message.type === 'room_users') {
+      setUsers(message.users);
+    }
+  }, []);
+
+  // Initialize WebSocket connection
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !user?.token) return;
 
-    const newSocket = io(API_URL, {
-      auth: {
-        token: user?.token
+    const onOpen = () => {
+      console.log('WebSocket connected');
+      // Join the room when connected
+      const savedRoom = localStorage.getItem('currentRoom');
+      if (savedRoom) {
+        websocketService.sendMessage({
+          type: 'join_room',
+          room: savedRoom,
+          username: user?.username
+        });
+        setRoom(savedRoom);
       }
-    });
+    };
 
-    newSocket.on('connect', () => {
-      console.log('Connected to WebSocket server');
-    });
+    const onClose = () => {
+      console.log('WebSocket disconnected');
+      setRoom('');
+      setUsers([]);
+      setMessages([]);
+    };
 
-    newSocket.on('connect_error', (err) => {
-      console.error('Connection error:', err);
-      if (err.message === 'Authentication error') {
-        logout();
-      }
-    });
+    const onError = (error) => {
+      console.error('WebSocket error:', error);
+      setError('Erreur de connexion au serveur');
+    };
 
-    setSocket(newSocket);
+    // Connect to WebSocket
+    websocketService.connect(user.token, onOpen, onClose, onError);
+    const removeHandler = websocketService.addMessageHandler(handleWebSocketMessage);
 
+    // Cleanup on unmount
     return () => {
-      if (newSocket) {
-        newSocket.disconnect();
-      }
+      removeHandler();
+      websocketService.disconnect();
     };
-  }, [isAuthenticated, user?.token, logout]);
+  }, [isAuthenticated, user?.token, user?.username, handleWebSocketMessage]);
 
-  // Gestion des événements WebSocket
-  useEffect(() => {
-    if (!socket) return;
-
-    const handleCodeUpdate = (newCode) => {
-      setCode(newCode);
-    };
-
-    const handleNewMessage = (message) => {
-      setMessages((prev) => [...prev, message]);
-    };
-
-    const handleRoomData = (data) => {
-      setCode(data.code || '');
-      setMessages(data.messages || []);
-      setUsers(data.users || []);
-    };
-
-    const handleUserJoined = (user) => {
-      setUsers((prev) => [...prev, user]);
-      setMessages((prev) => [
-        ...prev,
-        { user: 'Système', text: `${user} a rejoint la salle`, timestamp: new Date() },
-      ]);
-    };
-
-    const handleUserLeft = (username) => {
-      setUsers((prev) => prev.filter((user) => user !== username));
-      setMessages((prev) => [
-        ...prev,
-        { user: 'Système', text: `${username} a quitté la salle`, timestamp: new Date() },
-      ]);
-    };
-
-    socket.on('code_updated', handleCodeUpdate);
-    socket.on('new_message', handleNewMessage);
-    socket.on('room_data', handleRoomData);
-    socket.on('user_joined', handleUserJoined);
-    socket.on('user_left', handleUserLeft);
-
-    return () => {
-      socket.off('code_updated', handleCodeUpdate);
-      socket.off('new_message', handleNewMessage);
-      socket.off('room_data', handleRoomData);
-      socket.off('user_joined', handleUserJoined);
-      socket.off('user_left', handleUserLeft);
-    };
-  }, [socket]);
-
-  const joinRoom = async (roomName, username) => {
-    if (!socket || !isAuthenticated) return;
+  // Rejoindre une salle
+  const joinRoom = (roomName, username) => {
+    if (!username || !roomName) return;
 
     setLoading(true);
     setError('');
 
-    try {
-      // Utiliser le token d'authentification pour rejoindre la salle
-      socket.emit('join_room', { 
-        room: roomName, 
-        username: user.username || username,
-        token: user.token
-      }, (response) => {
-        if (response?.error) {
-          setError(response.error);
-          if (response.code === 'AUTH_ERROR') {
-            logout();
-          }
-        } else {
-          setRoom(roomName);
-          setCurrentUser(user.username || username);
-          // Sauvegarder la salle dans le localStorage pour la récupérer après un rafraîchissement
-          localStorage.setItem('currentRoom', roomName);
-        }
-      });
-    } catch (err) {
-      console.error('Error joining room:', err);
-      setError('Une erreur est survenue lors de la connexion à la salle');
-    } finally {
-      setLoading(false);
-    }
+    // Send join room message via WebSocket
+    websocketService.sendMessage({
+      type: 'join_room',
+      room: roomName,
+      username: username
+    });
+
+    // Update local state
+    setRoom(roomName);
+    setCurrentUser(user?.username || username);
+    
+    // Save room to localStorage for page refresh
+    localStorage.setItem('currentRoom', roomName);
+    
+    setLoading(false);
   };
 
   const handleLogout = async () => {
     try {
-      if (socket) {
-        socket.emit('leave_room');
-        socket.disconnect();
+      // Send leave room message if in a room
+      if (room) {
+        websocketService.sendMessage({
+          type: 'leave_room',
+          room: room,
+          username: currentUser
+        });
       }
+      
+      // Disconnect WebSocket
+      websocketService.disconnect();
+      
+      // Clear local state
+      setRoom('');
+      setUsers([]);
+      setMessages([]);
+      
+      // Logout and redirect
       await logout();
       navigate('/login', { replace: true });
     } catch (err) {
@@ -163,8 +144,12 @@ const App = () => {
   };
 
   const leaveRoom = () => {
-    if (socket) {
-      socket.emit('leave_room');
+    if (room) {
+      websocketService.sendMessage({
+        type: 'leave_room',
+        room: room,
+        username: currentUser
+      });
       localStorage.removeItem('currentRoom');
     }
     setRoom('');
@@ -175,35 +160,39 @@ const App = () => {
 
   const handleCodeChange = (newCode) => {
     setCode(newCode);
-    if (socket) {
-      socket.emit('code_update', { code: newCode, room });
+    if (room) {
+      websocketService.sendMessage({
+        type: 'code_update',
+        room: room,
+        code: newCode
+      });
     }
   };
 
   const handleSendMessage = (message) => {
-    if (!socket || !message.trim()) return;
+    if (!message.trim() || !room) return;
 
     const newMessage = {
+      type: 'chat_message',
+      room: room,
       user: currentUser,
-      text: message,
-      timestamp: new Date(),
+      message: message.trim(),
+      timestamp: new Date().toISOString()
     };
 
-    socket.emit('send_message', { 
-      message: newMessage,
-      room,
-    });
+    websocketService.sendMessage(newMessage);
+    setMessages(prev => [...prev, newMessage]);
   };
 
   // Récupérer la salle précédente après un rafraîchissement
   useEffect(() => {
-    if (isAuthenticated && socket && !room) {
+    if (isAuthenticated && !room) {
       const savedRoom = localStorage.getItem('currentRoom');
-      if (savedRoom) {
-        joinRoom(savedRoom, user?.username);
+      if (savedRoom && user?.username) {
+        joinRoom(savedRoom, user.username);
       }
     }
-  }, [isAuthenticated, socket, user?.username]);
+  }, [isAuthenticated, room, user?.username]);
 
   if (authLoading) {
     return (
