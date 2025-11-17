@@ -174,40 +174,90 @@ def get_file(file_id: int, current_user=Depends(auth.get_current_user), db: Sess
 
 # === WEBSOCKET : Synchronisation en temps réel ===
 
-@app.websocket("/ws/file/{file_id}")
-async def websocket_endpoint(websocket: WebSocket, file_id: int, token: str = None, db: Session = Depends(get_db)):
-    # Authentification via token dans les query params
+@app.websocket("/ws/chat/group/{group_id}")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    group_id: int,
+    token: str = None,
+    db: Session = Depends(get_db)
+):
+    # Authentification via token
     if not token:
-        await websocket.close(code=1008)
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
     try:
         user = auth.get_current_user(token, db)
-    except:
-        await websocket.close(code=1008)
+    except Exception as e:
+        print(f"Erreur d'authentification: {e}")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    file = crud.get_file(db, file_id)
-    if not file or file.project.owner_id != user.id:
-        await websocket.close(code=1008)
+    # Vérifier que l'utilisateur a accès au groupe
+    group = db.query(models.ChatGroup).get(group_id)
+    if not group or user not in group.members:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         return
 
-    await manager.connect(websocket, file_id)
+    # Connecter l'utilisateur au groupe
+    await manager.connect(websocket, user.id, group_id)
+    
     try:
-        # Envoyer le contenu actuel au nouveau client
-        await websocket.send_json({"type": "init", "content": file.content})
+        # Envoyer la liste des utilisateurs connectés
+        connected_users = manager.get_connected_users(group_id)
+        await manager.broadcast_group(
+            group_id,
+            {
+                "type": "user_list",
+                "users": [{"id": u.id, "username": u.username} for u in connected_users]
+            }
+        )
+
+        # Boucle principale de réception des messages
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            if message.get("type") == "update":
-                content = message["content"]
-                crud.update_file_content(db, file_id, content)
-                await manager.broadcast({
-                    "type": "update",
-                    "content": content
-                }, file_id)
+            
+            if message.get("type") == "chat_message":
+                # Créer et sauvegarder le message
+                db_message = models.ChatMessage(
+                    content=message["content"],
+                    sender_id=user.id,
+                    group_id=group_id
+                )
+                db.add(db_message)
+                db.commit()
+                db.refresh(db_message)
+                
+                # Diffuser le message à tous les utilisateurs du groupe
+                await manager.broadcast_group(
+                    group_id,
+                    {
+                        "type": "chat_message",
+                        "id": db_message.id,
+                        "content": db_message.content,
+                        "sender_id": user.id,
+                        "sender_username": user.username,
+                        "timestamp": db_message.timestamp.isoformat(),
+                        "user": {
+                            "id": user.id,
+                            "username": user.username,
+                            "profile_photo": user.profile_photo
+                        }
+                    }
+                )
+                
     except WebSocketDisconnect:
-        manager.disconnect(websocket, file_id)
+        manager.disconnect(websocket, user.id, group_id)
+        # Mettre à jour la liste des utilisateurs connectés
+        connected_users = manager.get_connected_users(group_id)
+        await manager.broadcast_group(
+            group_id,
+            {
+                "type": "user_list",
+                "users": [{"id": u.id, "username": u.username} for u in connected_users]
+            }
+        )
     except Exception as e:
-        print(e)
-        manager.disconnect(websocket, file_id)
+        print(f"Erreur WebSocket: {e}")
+        manager.disconnect(websocket, user.id, group_id)
