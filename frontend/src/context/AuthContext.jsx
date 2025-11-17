@@ -6,6 +6,7 @@ const AuthContext = createContext(null);
 
 // Clés pour le stockage local
 const TOKEN_KEY = 'auth_token';
+const USER_KEY = 'user_data';
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
