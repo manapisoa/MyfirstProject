@@ -3,9 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './context/AuthContext';
 import CodeEditor from './components/CodeEditor/CodeEditor';
 import Chat from './components/Chat/Chat';
+import { getAuthToken } from './services/authService';
 import RoomSelector from './components/RoomSelector/RoomSelector';
 import { FaCode, FaUsers, FaSignOutAlt, FaUserCircle, FaSpinner } from 'react-icons/fa';
-import websocketService from './services/websocketService';
+import webSocketService from './services/websocketService';
 import './App.css';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -55,22 +56,36 @@ const App = () => {
   useEffect(() => {
     if (!isAuthenticated || !user?.token) return;
 
+    const savedRoom = localStorage.getItem('currentRoom') || '1'; // Utiliser '1' comme salle par défaut
+    let isMounted = true;
+    
     const onOpen = () => {
+      if (!isMounted) return;
+      
       console.log('WebSocket connected');
-      // Join the room when connected
-      const savedRoom = localStorage.getItem('currentRoom');
-      if (savedRoom) {
-        websocketService.sendMessage({
-          type: 'join_room',
-          room: savedRoom,
-          username: user?.username
-        });
-        setRoom(savedRoom);
-      }
+      setError('');
+      
+      // Ne pas définir la salle ici, attendre la confirmation du serveur
+      const joinMessage = {
+        type: 'join_room',
+        room: savedRoom,
+        username: user.username
+      };
+      
+      // Utiliser setTimeout pour s'assurer que le message est envoyé après l'établissement de la connexion
+      setTimeout(() => {
+        if (webSocketService.isConnected) {
+          webSocketService.sendMessage(joinMessage);
+        }
+      }, 100);
     };
 
     const onClose = () => {
       console.log('WebSocket disconnected');
+      if (room) {
+        setError('Déconnecté du serveur. Tentative de reconnexion...');
+      }
+      // Réinitialiser l'état de la salle
       setRoom('');
       setUsers([]);
       setMessages([]);
@@ -81,16 +96,48 @@ const App = () => {
       setError('Erreur de connexion au serveur');
     };
 
-    // Connect to WebSocket
-    websocketService.connect(user.token, onOpen, onClose, onError);
-    const removeHandler = websocketService.addMessageHandler(handleWebSocketMessage);
+    // Configurer le gestionnaire de messages
+    const removeMessageHandler = webSocketService.addMessageHandler((message) => {
+      if (!isMounted) return;
+      
+      console.log('Message reçu:', message);
+      
+      if (message.type === 'chat_message') {
+        setMessages(prev => [...prev, {
+          id: message.id || Date.now(),
+          content: message.content,
+          sender: message.sender_username || message.username || 'Système',
+          timestamp: message.timestamp || new Date().toISOString(),
+          user: message.user || { username: message.username || 'Système' }
+        }]);
+      } else if (message.type === 'user_list') {
+        // Mettre à jour la liste des utilisateurs connectés
+        setUsers(message.users || []);
+      } else if (message.type === 'room_joined') {
+        // La salle a été rejointe avec succès
+        setRoom(savedRoom);
+        setError('');
+      }
+    });
 
-    // Cleanup on unmount
+    // Se connecter au WebSocket avec le token d'authentification
+    const wsUrl = `${import.meta.env.VITE_WS_URL || 'ws://localhost:8000'}/ws/chat/group/${savedRoom}?token=${user.token}`;
+    webSocketService.connect(wsUrl, {
+      onOpen,
+      onClose,
+      onError
+    });
+
+    // Nettoyage lors du démontage du composant
     return () => {
-      removeHandler();
-      websocketService.disconnect();
+      isMounted = false;
+      removeMessageHandler();
+      webSocketService.disconnect();
+      setRoom('');
+      setUsers([]);
+      setMessages([]);
     };
-  }, [isAuthenticated, user?.token, user?.username, handleWebSocketMessage]);
+  }, [isAuthenticated, user?.token, user?.username]);
 
   // Rejoindre une salle
   const joinRoom = (roomName, username) => {
@@ -99,55 +146,76 @@ const App = () => {
     setLoading(true);
     setError('');
 
-    // Send join room message via WebSocket
-    websocketService.sendMessage({
-      type: 'join_room',
-      room: roomName,
-      username: username
-    });
-
-    // Update local state
-    setRoom(roomName);
-    setCurrentUser(user?.username || username);
-    
-    // Save room to localStorage for page refresh
+    // Sauvegarder la salle
     localStorage.setItem('currentRoom', roomName);
     
-    setLoading(false);
+    // Se reconnecter avec la nouvelle salle
+    if (webSocketService.isConnected) {
+      // Envoyer un message de changement de salle
+      webSocketService.sendMessage({
+        type: 'join_room',
+        room: roomName,
+        username: username
+      });
+      
+      // Mettre à jour l'état après un court délai
+      setTimeout(() => {
+        setRoom(roomName);
+        setLoading(false);
+      }, 100);
+    } else {
+      // Si pas connecté, la connexion sera gérée par l'effet principal
+      setRoom(roomName);
+      setLoading(false);
+    }
   };
-
   const handleLogout = async () => {
     try {
-      // Send leave room message if in a room
-      if (room) {
-        websocketService.sendMessage({
-          type: 'leave_room',
-          room: room,
-          username: currentUser
-        });
+      // Envoyer un message de départ si dans une salle et connecté
+      if (room && webSocketService.isConnected) {
+        try {
+          await webSocketService.sendMessage({
+            type: 'chat_message',
+            content: `${currentUser} a quitté la salle`,
+            username: currentUser,
+            room: room
+          });
+          // Attendre un court instant pour s'assurer que le message est envoyé
+          await new Promise(resolve => setTimeout(resolve, 100));
+        } catch (error) {
+          console.error('Erreur lors de l\'envoi du message de départ:', error);
+          // Continuer même en cas d'erreur d'envoi du message
+        }
       }
       
-      // Disconnect WebSocket
-      websocketService.disconnect();
+      // Déconnecter le WebSocket
+      webSocketService.disconnect();
       
-      // Clear local state
+      // Réinitialiser l'état local
       setRoom('');
       setUsers([]);
       setMessages([]);
       
-      // Logout and redirect
+      // Effacer le stockage local
+      localStorage.removeItem('currentRoom');
+      
+      // Déconnecter l'utilisateur et rediriger
       await logout();
       navigate('/login', { replace: true });
     } catch (err) {
-      console.error('Logout error:', err);
+      console.error('Erreur lors de la déconnexion:', err);
+      // Forcer la déconnexion même en cas d'erreur
+      webSocketService.disconnect();
+      await logout();
+      navigate('/login', { replace: true });
     }
   };
 
   const leaveRoom = () => {
-    if (room) {
-      websocketService.sendMessage({
-        type: 'leave_room',
-        room: room,
+    if (room && webSocketService.isConnected) {
+      webSocketService.sendMessage({
+        type: 'chat_message',
+        content: `${currentUser} a quitté la salle`,
         username: currentUser
       });
       localStorage.removeItem('currentRoom');
@@ -160,11 +228,12 @@ const App = () => {
 
   const handleCodeChange = (newCode) => {
     setCode(newCode);
-    if (room) {
-      websocketService.sendMessage({
+    if (room && webSocketService.isConnected) {
+      webSocketService.sendMessage({
         type: 'code_update',
         room: room,
-        code: newCode
+        code: newCode,
+        username: currentUser
       });
     }
   };
@@ -180,7 +249,75 @@ const App = () => {
       timestamp: new Date().toISOString()
     };
 
-    websocketService.sendMessage(newMessage);
+    // Vérifier l'authentification avant d'envoyer un message
+    const token = getAuthToken();
+    if (!token) {
+      console.error('Aucun token d\'authentification trouvé, redirection vers la page de connexion');
+      setError('Session expirée, veuillez vous reconnecter');
+      // Forcer la déconnexion et rediriger vers la page de connexion
+      handleLogout();
+      return;
+    }
+
+    if (webSocketService.isConnected) {
+      try {
+        webSocketService.sendMessage(newMessage);
+        console.log('Message envoyé avec succès:', newMessage);
+      } catch (error) {
+        console.error('Erreur lors de l\'envoi du message:', error);
+        
+        // Si c'est une erreur d'authentification, forcer la déconnexion
+        if (error.message && error.message.includes('Non authentifié')) {
+          setError('Session expirée, veuillez vous reconnecter');
+          handleLogout();
+          return;
+        }
+        
+        // Mettre le message en attente en cas d'échec
+        webSocketService.pendingMessages.push(newMessage);
+        console.log('Message mis en attente après erreur. Total en attente:', webSocketService.pendingMessages.length);
+      }
+    } else {
+      console.log('WebSocket non connecté, mise en attente du message...');
+      
+      // Stocker le message pour le renvoyer plus tard
+      webSocketService.pendingMessages.push(newMessage);
+      console.log('Message mis en attente. Total en attente:', webSocketService.pendingMessages.length);
+      
+      // Tenter de se reconnecter si ce n'est pas déjà fait
+      if (webSocketService.reconnectAttempts < webSocketService.maxReconnectAttempts) {
+        console.log('Tentative de reconnexion...');
+        const savedRoom = localStorage.getItem('currentRoom');
+        if (savedRoom && user?.username) {
+          webSocketService.connect(savedRoom, {
+            onOpen: () => {
+              console.log('Reconnecté avec succès après une déconnexion');
+              // Les messages en attente seront envoyés automatiquement par le service
+              setError('');
+            },
+            onError: (error) => {
+              console.error('Échec de la reconnexion:', error);
+              if (error.message && error.message.includes('Non authentifié')) {
+                setError('Session expirée, veuillez vous reconnecter');
+                handleLogout();
+              } else {
+                setError('Impossible de se connecter au serveur. Réessayez plus tard.');
+              }
+            }
+          }).catch(error => {
+            console.error('Erreur lors de la tentative de connexion:', error);
+            if (error.message && error.message.includes('Non authentifié')) {
+              setError('Session expirée, veuillez vous reconnecter');
+              handleLogout();
+            }
+          });
+        }
+      } else {
+        setError('Impossible de se connecter au serveur. Veuillez rafraîchir la page.');
+      }
+    }
+    
+    // Mettre à jour l'interface utilisateur avec le nouveau message
     setMessages(prev => [...prev, newMessage]);
   };
 
@@ -192,7 +329,7 @@ const App = () => {
         joinRoom(savedRoom, user.username);
       }
     }
-  }, [isAuthenticated, room, user?.username]);
+  }, [isAuthenticated, room, user?.username, joinRoom]);
 
   if (authLoading) {
     return (

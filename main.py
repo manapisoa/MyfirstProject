@@ -177,26 +177,78 @@ def get_file(file_id: int, current_user=Depends(auth.get_current_user), db: Sess
 @app.websocket("/ws/chat/group/{group_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
-    group_id: int,
+    group_id: str,  # Accepter une chaîne pour plus de flexibilité
     token: str = None,
     db: Session = Depends(get_db)
 ):
+    print(f"Nouvelle tentative de connexion WebSocket - Groupe: {group_id}")
+    
     # Authentification via token
     if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        error_msg = "Token d'authentification manquant"
+        print(f"Erreur de connexion: {error_msg}")
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=error_msg
+        )
         return
 
     try:
+        # Décoder le token (il pourrait être encodé dans l'URL)
+        import urllib.parse
+        token = urllib.parse.unquote(token)
+        
+        print(f"Authentification avec le token: {token[:20]}...")
         user = auth.get_current_user(token, db)
+        print(f"Utilisateur authentifié: {user.username} (ID: {user.id})")
     except Exception as e:
-        print(f"Erreur d'authentification: {e}")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        error_msg = f"Erreur d'authentification: {str(e)}"
+        print(error_msg)
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=error_msg
+        )
         return
 
-    # Vérifier que l'utilisateur a accès au groupe
-    group = db.query(models.ChatGroup).get(group_id)
-    if not group or user not in group.members:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+    # Convertir group_id en entier si possible
+    try:
+        group_id_int = int(group_id)
+    except ValueError:
+        # Si ce n'est pas un nombre, essayer de trouver par nom
+        print(f"Recherche du groupe par nom: {group_id}")
+        group = db.query(models.ChatGroup).filter(
+            models.ChatGroup.name == group_id
+        ).first()
+        if not group:
+            error_msg = f"Groupe non trouvé: {group_id}"
+            print(error_msg)
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason=error_msg
+            )
+            return
+        group_id_int = group.id
+    else:
+        # Si c'est un nombre, chercher directement par ID
+        group = db.query(models.ChatGroup).get(group_id_int)
+    
+    # Vérifier que le groupe existe et que l'utilisateur est membre
+    if not group:
+        error_msg = f"Groupe introuvable avec l'ID: {group_id_int}"
+        print(error_msg)
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=error_msg
+        )
+        return
+        
+    if user not in group.members:
+        error_msg = f"Accès refusé: L'utilisateur n'est pas membre du groupe {group.name} (ID: {group.id})"
+        print(error_msg)
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason=error_msg
+        )
         return
 
     # Connecter l'utilisateur au groupe

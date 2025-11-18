@@ -236,8 +236,17 @@ export function isTokenExpired(token) {
     
     const currentTime = Math.floor(Date.now() / 1000); // Temps actuel en secondes
     return decoded.exp < currentTime;
-  } catch (err) {
-    console.error('Erreur lors de la vérification du token:', err);
+  } catch (error) {
+    console.error('Erreur lors de la vérification du token:', error);
     return true; // En cas d'erreur, on considère le token comme expiré/invalide
   }
+}
+
+/**
+ * Récupère le token d'authentification depuis le stockage local
+ * @returns {string|null} Le token JWT ou null s'il n'existe pas ou est expiré
+ */
+export function getAuthToken() {
+  const token = localStorage.getItem('auth_token');
+  return token && !isTokenExpired(token) ? token : null;
 }
