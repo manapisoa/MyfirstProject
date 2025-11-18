@@ -90,9 +90,15 @@ class ChatGroupResponse(ChatGroupBase):
     created_at: datetime
     created_by: int
     member_count: int
+    members: List[UserResponse] = []
     
     class Config:
         from_attributes = True
+
+class APIResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[Dict[str, Any]] = None
 
 # Chat Message schemas
 class MessageBase(BaseModel):
@@ -119,6 +125,11 @@ class WebSocketMessage(BaseModel):
     user_id: Optional[int] = None
     username: Optional[str] = None
     timestamp: Optional[datetime] = None
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 
 # WebSocket event types
 class WSEventType(str, Enum):

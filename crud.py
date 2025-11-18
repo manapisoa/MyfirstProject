@@ -96,6 +96,38 @@ def get_chat_group(db: Session, group_id: int):
 def get_chat_group_by_code(db: Session, join_code: str):
     return db.query(models.ChatGroup).filter(models.ChatGroup.join_code == join_code).first()
 
+def create_chat_group(db: Session, group: schemas.ChatGroupCreate, user_id: int):
+    db_group = models.ChatGroup(
+        name=group.name,
+        is_private=group.is_private,
+        created_by=user_id
+    )
+    db.add(db_group)
+    db.commit()
+    db.refresh(db_group)
+    
+    # Ajouter le créateur comme membre
+    add_user_to_chat_group(db, user_id, db_group.id)
+    return db_group
+
+def search_chat_groups(db: Session, query: str, user_id: int, limit: int = 10):
+    return db.query(models.ChatGroup)\
+        .join(models.user_chat_group)\
+        .filter(
+            models.user_chat_group.c.user_id == user_id,
+            models.ChatGroup.name.ilike(f"%{query}%")
+        )\
+        .limit(limit)\
+        .all()
+
+def get_group_messages(db: Session, group_id: int, skip: int = 0, limit: int = 50):
+    return db.query(models.ChatMessage)\
+        .filter(models.ChatMessage.group_id == group_id)\
+        .order_by(models.ChatMessage.timestamp.desc())\
+        .offset(skip)\
+        .limit(limit)\
+        .all()
+
 def get_user_chat_groups(db: Session, user_id: int):
     user = db.query(models.User).options(joinedload(models.User.chat_groups)).get(user_id)
     return user.chat_groups if user else []

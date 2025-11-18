@@ -69,6 +69,20 @@ class ChatGroup(Base):
         # Générer un code aléatoire de 8 caractères (chiffres et lettres majuscules)
         alphabet = string.ascii_uppercase + string.digits
         return ''.join(secrets.choice(alphabet) for _ in range(8))
+        
+    def get_members_count(self):
+        return len(self.members)
+        
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "is_private": self.is_private,
+            "join_code": self.join_code,
+            "created_at": self.created_at.isoformat(),
+            "member_count": len(self.members),
+            "created_by": self.created_by
+        }
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
@@ -81,4 +95,19 @@ class ChatMessage(Base):
     sender = relationship("User", back_populates="messages")
     
     group_id = Column(Integer, ForeignKey("chat_groups.id"))
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "content": self.content,
+            "timestamp": self.timestamp.isoformat(),
+            "sender_id": self.sender_id,
+            "sender_username": self.sender.username if self.sender else None,
+            "group_id": self.group_id,
+            "user": {
+                "id": self.sender.id if self.sender else None,
+                "username": self.sender.username if self.sender else None,
+                "profile_photo": self.sender.profile_photo if self.sender else None
+            } if self.sender else None
+        }
     group = relationship("ChatGroup", back_populates="messages")
