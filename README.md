@@ -1,11 +1,6 @@
 
-Compte redue du jour
-Module HACCP
-– Debug 
-– Intégration de l’API corriger
-– Améliorations du design :
-• Tableau de bord plus lisible
-• Couleurs d’alerte plus visibles (vert/orange/rouge)
-Module Recettes
-– Refonte de la mise en page 
-– Affichage optimisé sur mobile et tablette
+Compte-rendu – 18 novembre 2025
+
+Refonte complète du design & mise en page des modules 
+Renforcement sécurité : ajout de gestion d’erreurs robuste + validation RegExp stricte sur tous les champs sensibles (évite injections, crashs et données corrompues)
+Implémentation des  API dans le module HACCP + batterie de tests unitaires et d’intégration
